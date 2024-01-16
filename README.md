@@ -7,7 +7,7 @@
 ## 개발 환경
 - python `3.11.5`
 ## Git-Flow
-- master:개발 확정 및 제출용 (직접 커밋x)
+- main:개발 확정 및 제출용 (직접 커밋x)
 - develop:개발 메인 브렌치
 - feat/???_!!!:개인 기능 개발 브랜치 (???은 이름 이니셜 및 기능. ex) feat/pts_fft)
 - hotfix:버그 수정
