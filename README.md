@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AudioLDM 2
 
 [![arXiv](https://img.shields.io/badge/arXiv-2308.05734-brightgreen.svg?style=flat-square)](https://arxiv.org/abs/2308.05734)  [![githubio](https://img.shields.io/badge/GitHub.io-Audio_Samples-blue?logo=Github&style=flat-square)](https://audioldm.github.io/audioldm2/)  [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/haoheliu/audioldm2-text2audio-text2music)  
@@ -200,3 +201,28 @@ If you found this tool useful, please consider citing
 }
 ```
 
+=======
+# 🖥CAPSTONE_KWU
+광운대학교 전자공학과 캡스톤 디자인을 위한 레파지토리입니다.
+## 📢프로젝트 소개
+이명 치료를 위한 주파수 설정 가능한 오디오 생성형 AI모델
+### 💾프로젝트 멤버
+- 정문귀(조장)
+- 박태수
+- 박민규
+- 김준영
+- 김나래
+## 📅프로젝트 기간
+- 2023.01. ~ 2023.06.
+## ⚙개발 환경
+- python `3.11.5`
+## 📐Git-Flow
+- main:개발 확정 및 제출용 (직접 커밋x)
+- develop:개발 메인 브렌치
+- feat/???_!!!:개인 기능 개발 브랜치 (???은 이름 이니셜 및 기능. ex) feat/pts_fft)
+- hotfix:버그 수정
+## 📍Features
+- [ ] 오디오 생성
+ - [ ] 생성 단계 FFT
+etc...
+>>>>>>> d6ec0466da608528e139d5b1ba0d4acf01a64a96
