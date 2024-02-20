@@ -20,8 +20,9 @@ from .pann_model import create_pann_model
 from .htsat import create_htsat_model
 from transformers import BertModel, RobertaModel, BartModel, RobertaConfig
 
-
+#다중 레이어 퍼셉트론(MLP)을 정의
 class MLPLayers(nn.Module):
+    #선형 레이어, 활성화 함수, 드롭아웃을 설정
     def __init__(self, units=[512, 512, 512], nonlin=nn.ReLU(), dropout=0.1):
         super(MLPLayers, self).__init__()
         self.nonlin = nonlin
@@ -35,19 +36,20 @@ class MLPLayers(nn.Module):
         sequence = sequence[:-2]
 
         self.sequential = nn.Sequential(*sequence)
-
+    #입력을 받아서 MLP 레이어를 통과
     def forward(self, X):
         X = self.sequential(X)
         return X
 
-
+#ResNet의 Bottleneck 블록을 정의 : 모델이 깊어질 때 적은 파라미터로 더 깊은 네트워크를 학습할 수 있도록 설계
+#ResNet 모델을 구축할 때 Bottleneck 블록을 여러 번 사용하여 네트워크를 구성할 수 있음
 class Bottleneck(nn.Module):
-    expansion = 4
-
+    expansion = 4#블록 내의 차원 확장 비율
+    #Bottleneck 블록의 구성 요소를 초기화
     def __init__(self, inplanes, planes, stride=1):
         super().__init__()
 
-        # all conv layers have stride 1. an avgpool is performed after the second convolution when stride > 1
+        #1x1, 3x3, 1x1 컨볼루션 레이어와 배치 정규화 레이어
         self.conv1 = nn.Conv2d(inplanes, planes, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
 
@@ -62,7 +64,8 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = None
         self.stride = stride
-
+        
+        #입력과 출력의 차원이 다를 경우 다운샘플링 레이어를 추가로 정의
         if stride > 1 or inplanes != planes * Bottleneck.expansion:
             # downsampling layer is prepended with an avgpool, and the subsequent convolution has stride 1
             self.downsample = nn.Sequential(
@@ -83,24 +86,25 @@ class Bottleneck(nn.Module):
                     ]
                 )
             )
-
+    # 주어진 입력에 대해 Bottleneck 블록 순전파
     def forward(self, x: torch.Tensor):
         identity = x
-
+        #컨볼루션 및 배치 정규화
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.relu(self.bn2(self.conv2(out)))
         out = self.avgpool(out)
         out = self.bn3(self.conv3(out))
-
+        #다운샘플링이 있는 경우에는 입력을 변경
         if self.downsample is not None:
             identity = self.downsample(x)
-
+        #ReLU 활성화 함수를 적용하여 반환
         out += identity
         out = self.relu(out)
         return out
 
-
+# 2D 어텐션 풀링 레이어를 정의 -> self-attention을 수행하고, 결과를 출력
 class AttentionPool2d(nn.Module):
+    #어텐션 풀링 레이어의 구성 요소를 초기화
     def __init__(
         self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: int = None
     ):
@@ -113,13 +117,14 @@ class AttentionPool2d(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.c_proj = nn.Linear(embed_dim, output_dim or embed_dim)
         self.num_heads = num_heads
-
+    #어텐션 풀링을 수행   
     def forward(self, x):
         x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3]).permute(
             2, 0, 1
         )  # NCHW -> (HW)NC
         x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (HW+1)NC
         x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (HW+1)NC
+        # height * width, batch_size, channels) 형태로 변환-> self attention 수행 -> 어텐션의 결과는 출력 프로젝션 레이어를 통해 변환된 후 반환
         x, _ = F.multi_head_attention_forward(
             query=x,
             key=x,
@@ -147,6 +152,7 @@ class AttentionPool2d(nn.Module):
         return x[0]
 
 
+# ModifiedResNet 클래스 생성
 class ModifiedResNet(nn.Module):
     """
     A ResNet class that is similar to torchvision's but contains the following changes:
@@ -154,17 +160,17 @@ class ModifiedResNet(nn.Module):
     - Performs anti-aliasing strided convolutions, where an avgpool is prepended to convolutions with stride > 1
     - The final pooling layer is a QKV attention instead of an average pool
     """
-
+    #클래스 초기화    
     def __init__(self, layers, output_dim, heads, image_size=224, width=64):
         super().__init__()
         self.output_dim = output_dim
         self.image_size = image_size
 
-        # the 3-layer stem
+        #Stem 레이어 변경 : 3개의 "stem" 컨볼루션 레이어를 사용
         self.conv1 = nn.Conv2d(
             3, width // 2, kernel_size=3, stride=2, padding=1, bias=False
         )
-        self.bn1 = nn.BatchNorm2d(width // 2)
+        self.bn1 = nn.BatchNorm2d(width // 2)#Batch Normalization이 적용
         self.conv2 = nn.Conv2d(
             width // 2, width // 2, kernel_size=3, padding=1, bias=False
         )
@@ -172,9 +178,10 @@ class ModifiedResNet(nn.Module):
         self.conv3 = nn.Conv2d(width // 2, width, kernel_size=3, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(width)
         self.avgpool = nn.AvgPool2d(2)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=True)#ReLU 활성화 함수가 사용
 
         # residual layers
+        #Bottleneck 클래스로 구현
         self._inplanes = width  # this is a *mutable* variable used during construction
         self.layer1 = self._make_layer(width, layers[0])
         self.layer2 = self._make_layer(width * 2, layers[1], stride=2)
@@ -183,102 +190,132 @@ class ModifiedResNet(nn.Module):
 
         embed_dim = width * 32  # the ResNet feature dimension
         self.attnpool = AttentionPool2d(image_size // 32, embed_dim, heads, output_dim)
-
+        '''
+        layers:각 레이어의 블록 수를 포함하는 리스트
+        output_dim:모델의 출력 차원
+        heads:QKV 어텐션 풀링 레이어에서 사용되는 어텐션 헤드의 수
+        image_size: 이미지의 크기 
+        width:모델의 초기 너비
+        '''
         self.init_parameters()
-
+   
+    #ResNet의 각 residual layer를 생성
     def _make_layer(self, planes, blocks, stride=1):
-        layers = [Bottleneck(self._inplanes, planes, stride)]
+        layers = [Bottleneck(self._inplanes, planes, stride)] # 새로운 Bottleneck 레이어 생성
 
-        self._inplanes = planes * Bottleneck.expansion
+        self._inplanes = planes * Bottleneck.expansion #inplanes 업데이트
         for _ in range(1, blocks):
             layers.append(Bottleneck(self._inplanes, planes))
 
-        return nn.Sequential(*layers)
-
+        return nn.Sequential(*layers) # 생성된 레이어를 시퀀셜 레이어로 반환
+    #모델의 파라미터를 초기화
     def init_parameters(self):
-        if self.attnpool is not None:
+        if self.attnpool is not None:#attnpool 레이어가 존재
             std = self.attnpool.c_proj.in_features**-0.5
-            nn.init.normal_(self.attnpool.q_proj.weight, std=std)
-            nn.init.normal_(self.attnpool.k_proj.weight, std=std)
-            nn.init.normal_(self.attnpool.v_proj.weight, std=std)
+            nn.init.normal_(self.attnpool.q_proj.weight, std=std) # 가중치 초기화
+            nn.init.normal_(self.attnpool.k_proj.weight, std=std) # 가중치 초기화
+            nn.init.normal_(self.attnpool.v_proj.weight, std=std) # 가중치 초기화
             nn.init.normal_(self.attnpool.c_proj.weight, std=std)
-
-        for resnet_block in [self.layer1, self.layer2, self.layer3, self.layer4]:
-            for name, param in resnet_block.named_parameters():
-                if name.endswith("bn3.weight"):
-                    nn.init.zeros_(param)
-
+ # 가중치 초기화
+        for resnet_block in [self.layer1, self.layer2, self.layer3, self.layer4]:# 각 residual 블록
+            for name, param in resnet_block.named_parameters(): # 블록 내의 각 파라미터
+                if name.endswith("bn3.weight"):# 만약 bn3.weight
+                    nn.init.zeros_(param)# 0으로 초기화
+    #모델의 파라미터를 잠금 처리
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         assert (
             unlocked_groups == 0
         ), "partial locking not currently supported for this model"
         for param in self.parameters():
-            param.requires_grad = False
+            param.requires_grad = False # 그래디언트 계산 비활성화
         if freeze_bn_stats:
-            freeze_batch_norm_2d(self)
-
+            freeze_batch_norm_2d(self) # Batch Normalization 통계 고정
+    #입력 이미지를 받아서 stem 레이어를 통과시키고 평균 풀링을 적용
     def stem(self, x):
         for conv, bn in [
             (self.conv1, self.bn1),
             (self.conv2, self.bn2),
             (self.conv3, self.bn3),
-        ]:
-            x = self.relu(bn(conv(x)))
-        x = self.avgpool(x)
+        ]: # 각각의 컨볼루션 레이어와 Batch Normalization
+            x = self.relu(bn(conv(x)))# 컨볼루션, ReLU, Batch Normalization 순서로 연산
+        x = self.avgpool(x) # 평균 풀링 적용
         return x
-
+    #입력을 모델에 전달하고 출력을 생성
     def forward(self, x):
-        x = self.stem(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.attnpool(x)
+        x = self.stem(x) # 입력 이미지에 stem 레이어 적용
+        x = self.layer1(x)# residual layer 적용
+        x = self.layer2(x)# residual layer 적용
+        x = self.layer3(x)# residual layer 적용
+        x = self.layer4(x)# residual layer 적용
+        x = self.attnpool(x) # QKV attention pooling 적용
 
-        return x
+        return x # 최종 출력 반환
 
-
+#PyTorch의 LayerNorm 클래스를 상속하여 fp16(반정밀도)을 처리
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
-
+    #입력 데이터에 LayerNorm을 적용
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
         x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
-        return x.to(orig_type)
+        return x.to(orig_type)#원본 데이터 타입으로 변환하여 반환
 
-
+# QuickGELU 활성화 함수 계산 및 반환
 class QuickGELU(nn.Module):
     # NOTE This is slower than nn.GELU or nn.SiLU and uses more GPU memory
     def forward(self, x: torch.Tensor):
-        return x * torch.sigmoid(1.702 * x)
+        return x * torch.sigmoid(1.702 * x)## QuickGELU 활성화 함수 계산 및 반환
 
-
+# Transformer 구조를 구현 :  Residual Attention Block
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, d_model: int, n_head: int, act_layer: Callable = nn.GELU):
         super().__init__()
-
+        ## Multi-head Attention 
         self.attn = nn.MultiheadAttention(d_model, n_head)
+        # Layer Normalization 
         self.ln_1 = LayerNorm(d_model)
+        # MLP (Multi-Layer Perceptron)
         self.mlp = nn.Sequential(
             OrderedDict(
                 [
-                    ("c_fc", nn.Linear(d_model, d_model * 4)),
-                    ("gelu", act_layer()),
-                    ("c_proj", nn.Linear(d_model * 4, d_model)),
+                    ("c_fc", nn.Linear(d_model, d_model * 4)),# Fully Connected Layer
+                    ("gelu", act_layer()),# 활성화 함수 (GELU)
+                    ("c_proj", nn.Linear(d_model * 4, d_model)),# Fully Connected Layer
                 ]
             )
         )
+        ## Layer Normalization 레이어
         self.ln_2 = LayerNorm(d_model)
 
     def attention(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        """
+        Multi-head Attention 수행
+        
+        Args:
+            x: 입력 텐서
+            attn_mask: 어텐션 마스크
+            
+        Returns:
+            어텐션 결과 텐서
+        """
         return self.attn(x, x, x, need_weights=False, attn_mask=attn_mask)[0]
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)
-        x = x + self.mlp(self.ln_2(x))
+        """
+        Residual Attention Block의 forward 연산
+        
+        Args:
+            x: 입력 텐서
+            attn_mask: 어텐션 마스크
+            
+        Returns:
+            출력 텐서
+        """
+        x = x + self.attention(self.ln_1(x), attn_mask=attn_mask)# 입력과 어텐션 결과를 더함 (Residual Connection)
+        x = x + self.mlp(self.ln_2(x))# 입력과 MLP 결과를 더함 (Residual Connection)
         return x
 
-
+#여러 개의 ResidualAttentionBlock을 쌓아 올린 전체 Transformer 모델을 정의
 class Transformer(nn.Module):
     def __init__(
         self, width: int, layers: int, heads: int, act_layer: Callable = nn.GELU
@@ -286,6 +323,7 @@ class Transformer(nn.Module):
         super().__init__()
         self.width = width
         self.layers = layers
+        # ResidualAttentionBlock을 layers 개수만큼 반복하여 리스트로 저장
         self.resblocks = nn.ModuleList(
             [
                 ResidualAttentionBlock(width, heads, act_layer=act_layer)
@@ -294,12 +332,23 @@ class Transformer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        """
+        Transformer의 forward 연산
+        
+        Args:
+            x: 입력 텐서
+            attn_mask: 어텐션 마스크
+            
+        Returns:
+            출력 텐서
+        """
         for r in self.resblocks:
             x = r(x, attn_mask=attn_mask)
         return x
 
-
+#VisualTransformer 모델을 정의
 class VisualTransformer(nn.Module):
+    #VisualTransformer 클래스 생성자 : 모델의 구조를 초기화
     def __init__(
         self,
         image_size: int,
@@ -313,6 +362,7 @@ class VisualTransformer(nn.Module):
         super().__init__()
         self.image_size = image_size
         self.output_dim = output_dim
+         # 이미지를 패치로 분할하기 위한 컨볼루션 레이어
         self.conv1 = nn.Conv2d(
             in_channels=3,
             out_channels=width,
@@ -322,25 +372,37 @@ class VisualTransformer(nn.Module):
         )
 
         scale = width**-0.5
+        # 클래스 임베딩
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
+        # 위치 임베딩
         self.positional_embedding = nn.Parameter(
             scale * torch.randn((image_size // patch_size) ** 2 + 1, width)
         )
+        # Layer Normalization 
         self.ln_pre = LayerNorm(width)
-
+        # Transformer
         self.text_branch = Transformer(width, layers, heads, act_layer=act_layer)
-
+        # Layer Normalization 
         self.ln_post = LayerNorm(width)
+        # Projection
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
-
+    #모델의 파라미터를 잠금
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         assert (
             unlocked_groups == 0
         ), "partial locking not currently supported for this model"
         for param in self.parameters():
             param.requires_grad = False
-
+            
+    #입력에 대해 모델의 순전파 연산을 정의
     def forward(self, x: torch.Tensor):
+        '''
+        1. 입력 이미지에 컨볼루션 레이어를 적용하여 이미지를 패치로 분할
+        2. 각 패치에 클래스 임베딩을 추가하고, 위치 임베딩을 더함
+        3. 입력 패치에 Layer Normalization을 적용
+        4. Transformer 모델에 입력을 전달하여 각 패치의 임베딩을 계산
+        5. 출력 임베딩에 Layer Normalization을 적용하고, 필요하다면 Projection 레이어를 적용하여 최종 출력을 생성
+    '''
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -354,42 +416,58 @@ class VisualTransformer(nn.Module):
             ],
             dim=1,
         )  # shape = [*, grid ** 2 + 1, width]
+        
+        # 위치 임베딩
         x = x + self.positional_embedding.to(x.dtype)
+        
+        # 입력 패치에 Layer Normalization
         x = self.ln_pre(x)
-
-        x = x.permute(1, 0, 2)  # NLD -> LND
+        
+        # 입력 차원 순서 변경 (NLD -> LND)
+        x = x.permute(1, 0, 2) 
+         # Transformer 모델 실행
         x = self.text_branch(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-
+        
+        # 출력 차원 순서 변경 (LND -> NLD)
+        x = x.permute(1, 0, 2) 
+        # 출력에 Layer Normalization
         x = self.ln_post(x[:, 0, :])
-
+        # Projection
         if self.proj is not None:
             x = x @ self.proj
 
         return x
 
 
+# 데이터 클래스 CLAPVisionCfg 정의
 @dataclass
 class CLAPVisionCfg:
+    #비전 트랜스포머의 레이어 수
     layers: Union[Tuple[int, int, int, int], int] = 12
+    #비전 트랜스포머의 너비
     width: int = 768
+    #이미지를 분할할 때 사용되는 패치의 크기
     patch_size: int = 16
+    #입력 이미지의 크기
     image_size: Union[Tuple[int, int], int] = 224
+    #Timm 라이브러리에서 사용할 모델의 이름
     timm_model_name: str = (
-        None  # a valid model name overrides layers, width, patch_size
+        None  
     )
+    #Timm 모델의 사전 훈련 가중치 사용 여부
     timm_model_pretrained: bool = (
-        False  # use (imagenet) pretrained weights for named model
+        False  
     )
+    # Timm 모델의 특성 풀링 방법
     timm_pool: str = (
-        "avg"  # feature pooling for timm model ('abs_attn', 'rot_attn', 'avg', '')
+        "avg"  
     )
+    #Timm 모델의 출력에 적용할 선형 변환 방법
     timm_proj: str = (
-        "linear"  # linear projection for timm model output ('linear', 'mlp', '')
+        "linear"
     )
 
-
-# Audio Config Class
+# Audio Config Class CLAP의 다른 모듈에 대한 설정을 저장
 @dataclass
 class CLAPAudioCfp:
     model_type: str = "PANN"
@@ -405,7 +483,7 @@ class CLAPAudioCfp:
     mel_bins: int = 64
     clip_samples: int = 480000
 
-
+# CLAP의 다른 모듈에 대한 설정을 저장
 @dataclass
 class CLAPTextCfg:
     context_length: int
@@ -417,6 +495,7 @@ class CLAPTextCfg:
 
 
 class CLAP(nn.Module):
+    #주어진 인수를 사용하여 CLAP 모델을 초기화
     def __init__(
         self,
         embed_dim: int,
@@ -572,8 +651,9 @@ class CLAP(nn.Module):
         self.register_buffer("attn_mask", self.build_attention_mask(), persistent=False)
 
         self.init_text_branch_parameters()
-
+    #텍스트 분기에 대한 초기 파라미터를 설정
     def init_text_branch_parameters(self):
+        #트랜스포머 모델인 경우, 초기화에 필요한 파라미터를 설정
         if self.text_branch_type == "transformer":
             nn.init.normal_(self.token_embedding.weight, std=0.02)
             nn.init.normal_(self.positional_embedding, std=0.01)
@@ -587,12 +667,14 @@ class CLAP(nn.Module):
                 nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
                 nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
                 nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        #BERT, RoBERTa, BART 등 특정 모델의 경우 해당 모델의 초기화를 수행
         if self.text_branch_type == "bert" or self.text_branch_type == "roberta":
             self.text_branch.embeddings.word_embeddings.weight.shape[-1]
         elif self.text_branch_type == "bart":
             self.text_branch.shared.weight.shape[-1]
         else:
             self.text_branch.width
+        #로짓 스케일링 파라미터를 설정
         nn.init.constant_(self.logit_scale_a, np.log(1 / 0.07))
         nn.init.constant_(self.logit_scale_t, np.log(1 / 0.07))
 
@@ -602,7 +684,7 @@ class CLAP(nn.Module):
 
         # if self.text_projection is not None:
         #     nn.init.normal_(self.text_projection, std=width**-0.5)
-
+    #어텐션 마스크를 생성
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
         # pytorch uses additive attention mask; fill with -inf
@@ -610,10 +692,10 @@ class CLAP(nn.Module):
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
-
+    #오디오를 인코딩하여 오디오 피처를 반환
     def encode_audio(self, audio, device):
         return self.audio_branch(
-            audio, mixup_lambda=None, device=device
+            audio, mixup_lambda=None, device=device #주어진 오디오 입력을 사용하여 오디오 분기의 모델을 통해 오디오 피처를 추출
         )  # mix lambda needs to add
 
     # def list_of_dict_of_tensor2dict_of_tensor(self, x, device):
@@ -625,7 +707,7 @@ class CLAP(nn.Module):
     #     for k in x[0].keys():
     #         tmp[k] = torch.tensor(tmp[k]).to(device=device, non_blocking=True)
     #     return tmp
-
+    #텍스트를 인코딩하여 텍스트 피처를 반환
     def encode_text(self, text, device):
         if self.text_branch_type == "transformer":
             text = text.to(device=device, non_blocking=True)
@@ -676,7 +758,7 @@ class CLAP(nn.Module):
             logging.error(f"Model type {self.text_branch_type} not found")
             raise RuntimeError(f"Model type {self.text_branch_type} not found.")
         return x
-
+    #CLAP 모델의 순방향 전달을 정의 특성을 추출하고, MLP 레이어를 통해 변환된 특성을 반환
     def forward(self, audio, text, device=None):
         """Forward audio and text into the CLAP
 
@@ -723,10 +805,10 @@ class CLAP(nn.Module):
             self.logit_scale_a.exp(),
             self.logit_scale_t.exp(),
         )
-
+    #로짓 스케일링 값을 반환
     def get_logit_scale(self):
         return self.logit_scale_a.exp(), self.logit_scale_t.exp()
-
+    #입력 데이터로부터 텍스트 임베딩을 반환
     def get_text_embedding(self, data):
         """Get the text embedding from the model
 
@@ -748,7 +830,7 @@ class CLAP(nn.Module):
         text_embeds = F.normalize(text_embeds, dim=-1)
 
         return text_embeds
-
+    #입력 데이터로부터 오디오 임베딩을 반환
     def get_audio_embedding(self, data):
         """Get the audio embedding from the model
 
@@ -776,7 +858,7 @@ class CLAP(nn.Module):
         audio_embeds = F.normalize(audio_embeds, dim=-1)
 
         return audio_embeds
-
+    #추론 모드에서 오디오를 전달하고 오디오 임베딩을 생성 : 모델에 따라 오디오 입력을 처리하고 오디오 임베딩을 반환
     def audio_infer(self, audio, hopsize=None, device=None):
         """Forward one audio and produce the audio embedding
 
@@ -835,7 +917,7 @@ class CLAP(nn.Module):
 
         return output_dict
 
-
+#주어진 모델의 일부 파라미터를 FP16 형식으로 변환
 def convert_weights_to_fp16(model: nn.Module):
     """Convert applicable model parameters to fp16"""
 
@@ -862,21 +944,24 @@ def convert_weights_to_fp16(model: nn.Module):
                 if attr is not None:
                     attr.data = attr.data.half()
 
-    model.apply(_convert_weights_to_fp16)
+    model.apply(_convert_weights_to_fp16)#레이어의 가중치와 편향을 FP16로 변환
 
 
-# Ignore the state dict of the vision part
+#OpenAI의 사전 학습된 상태 사전을 사용하여 CLAP 모델을 구축
 def build_model_from_openai_state_dict(
     state_dict: dict, model_cfg, enable_fusion: bool = False, fusion_type: str = "None"
 ):
+    # 모델 구성에서 필요한 정보 추출
     embed_dim = model_cfg["embed_dim"]
     audio_cfg = model_cfg["audio_cfg"]
     text_cfg = model_cfg["text_cfg"]
-    state_dict["positional_embedding"].shape[0]
-    state_dict["token_embedding.weight"].shape[0]
-    transformer_width = state_dict["ln_final.weight"].shape[0]
-    transformer_width // 64
-    transformer_layers = len(
+
+    # 상태 사전에서 특정 값의 속성 추출
+    state_dict["positional_embedding"].shape[0]  # 위치 임베딩의 크기 확인
+    state_dict["token_embedding.weight"].shape[0]  # 토큰 임베딩의 크기 확인
+    transformer_width = state_dict["ln_final.weight"].shape[0]  # 변형기의 너비 확인
+    transformer_width // 64  # 변형기의 너비를 64로 나눔
+    transformer_layers = len(  # 변형기의 레이어 수 계산
         set(
             k.split(".")[2]
             for k in state_dict
@@ -884,34 +969,41 @@ def build_model_from_openai_state_dict(
         )
     )
 
+    # CLAPAudioCfp 및 CLAPTextCfg 인스턴스화
     audio_cfg = CLAPAudioCfp(**audio_cfg)
     text_cfg = CLAPTextCfg(**text_cfg)
 
+    # CLAP 모델 구축
     model = CLAP(
         embed_dim,
         audio_cfg=audio_cfg,
         text_cfg=text_cfg,
-        quick_gelu=True,  # OpenAI models were trained with QuickGELU
+        quick_gelu=True,  # OpenAI 모델은 QuickGELU로 훈련
         enable_fusion=enable_fusion,
         fusion_type=fusion_type,
     )
+
+    # logit_scale_a와 logit_scale_t를 설정
     state_dict["logit_scale_a"] = state_dict["logit_scale"]
     state_dict["logit_scale_t"] = state_dict["logit_scale"]
+
+    # 상태 사전에서 제거할 키 목록 설정
     pop_keys = list(state_dict.keys())[::]
-    # pop the visual branch saved weights
     for key in pop_keys:
+        # 시각 분기 저장된 가중치 제거
         if key.startswith("visual."):
             state_dict.pop(key, None)
 
+    # 사용하지 않는 키 제거
     for key in ["logit_scale", "input_resolution", "context_length", "vocab_size"]:
         state_dict.pop(key, None)
 
-    # not use fp16
-    # convert_weights_to_fp16(model)
+    # 가중치를 로드하고 평가 모드로 설정하여 모델 반환
     model.load_state_dict(state_dict, strict=False)
     return model.eval()
 
 
+#모델을 추적하고 TorchScript로 변환
 def trace_model(model, batch_size=256, device=torch.device("cpu")):
     model.eval()
     audio_length = model.audio_cfg.audio_length
@@ -919,7 +1011,7 @@ def trace_model(model, batch_size=256, device=torch.device("cpu")):
     example_text = torch.zeros(
         (batch_size, model.context_length), dtype=torch.int, device=device
     )
-    model = torch.jit.trace_module(
+    model = torch.jit.trace_module(#모델을 추적
         model,
         inputs=dict(
             forward=(example_audio, example_text),
@@ -927,5 +1019,5 @@ def trace_model(model, batch_size=256, device=torch.device("cpu")):
             encode_image=(example_audio,),
         ),
     )
-    model.audio_cfg.audio_length = audio_length  # Question: what does this do?
+    model.audio_cfg.audio_length = audio_length#  추적 시 오디오 길이를 설정하는 데 사용
     return model

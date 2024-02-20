@@ -4,7 +4,7 @@ import urllib
 import warnings
 
 from tqdm import tqdm
-
+#CLIP(Contrastive Language-Image Pretraining) 모델을 사용하기 위한 사전 훈련된 모델 다운로드 및 관리
 _RN50 = dict(
     openai="https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
     yfcc15m="https://github.com/mlfoundations/open_clip/releases/download/v0.2-weights/rn50-quickgelu-yfcc15m-455df137.pt",
@@ -74,7 +74,7 @@ _PRETRAINED = {
     "ViT-L-14": _VITL14,
 }
 
-
+#사용 가능한 사전 훈련된 모델의 목록을 반환
 def list_pretrained(as_str: bool = False):
     """returns list of pretrained models
     Returns a tuple (model_name, pretrain_tag) by default or 'name:tag' if as_str == True
@@ -85,7 +85,7 @@ def list_pretrained(as_str: bool = False):
         for t in _PRETRAINED[k].keys()
     ]
 
-
+#특정 사전 훈련 태그를 가진 모든 모델을 반환
 def list_pretrained_tag_models(tag: str):
     """return all models having the specified pretrain tag"""
     models = []
@@ -94,7 +94,7 @@ def list_pretrained_tag_models(tag: str):
             models.append(k)
     return models
 
-
+# 특정 모델 아키텍처에 대한 모든 사전 훈련 태그를 반환
 def list_pretrained_model_tags(model: str):
     """return all pretrain tags for the specified model architecture"""
     tags = []
@@ -102,7 +102,7 @@ def list_pretrained_model_tags(model: str):
         tags.extend(_PRETRAINED[model].keys())
     return tags
 
-
+#주어진 모델 아키텍처와 태그에 대한 사전 훈련된 모델의 URL을 반환
 def get_pretrained_url(model: str, tag: str):
     if model not in _PRETRAINED:
         return ""
@@ -111,7 +111,7 @@ def get_pretrained_url(model: str, tag: str):
         return ""
     return model_pretrained[tag]
 
-
+#주어진 URL에서 사전 훈련된 모델을 다운로드하고 캐시에 저장
 def download_pretrained(url: str, root: str = os.path.expanduser("~/.cache/clip")):
     os.makedirs(root, exist_ok=True)
     filename = os.path.basename(url)

@@ -26,23 +26,23 @@ from .utils import do_mixup, interpolate
 from .feature_fusion import iAFF, AFF, DAF
 
 
-# from PyTorch internals
+# x가 반복 가능한지 확인
 def _ntuple(n):
     def parse(x):
-        if isinstance(x, collections.abc.Iterable):
+        if isinstance(x, collections.abc.Iterable): # x가 반복 가능한지 확인
             return x
-        return tuple(repeat(x, n))
+        return tuple(repeat(x, n))# 반복 가능하지 않으면 x를 n번 반복하여 튜플로 반환
 
     return parse
 
-
+# 튜플을 생성하는 각 유틸리티 함수
 to_1tuple = _ntuple(1)
 to_2tuple = _ntuple(2)
 to_3tuple = _ntuple(3)
 to_4tuple = _ntuple(4)
 to_ntuple = _ntuple
 
-
+#각 샘플에 대해 경로를 삭제
 def drop_path(x, drop_prob: float = 0.0, training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
     This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
@@ -51,18 +51,21 @@ def drop_path(x, drop_prob: float = 0.0, training: bool = False):
     changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
     'survival rate' as the argument.
     """
+    # 드롭 확률이 0이거나 트레이닝 중이 아닌 경우, 입력을 그대로 반환
     if drop_prob == 0.0 or not training:
         return x
+    # 살아남을 확률을 계산
     keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (
+    shape = (x.shape[0],) + (1,) * ( # 다차원 텐서에서도 작동하도록 입력 텐서의 모양을 가져와서 새 모양을 구성
         x.ndim - 1
     )  # work with diff dim tensors, not just 2D ConvNets
-    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()  # binarize
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)# 무작위 텐서를 생성하여 이진화
+    random_tensor.floor_()
+    # 드롭아웃 적용하여 출력 계산
     output = x.div(keep_prob) * random_tensor
     return output
 
-
+#residual blocks의 주요 경로에 적용될 때 각 샘플에 대한 경로를 삭제
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""
 
@@ -73,7 +76,7 @@ class DropPath(nn.Module):
     def forward(self, x):
         return drop_path(x, self.drop_prob, self.training)
 
-
+#2D 이미지를 패치 임베딩으로 변환
 class PatchEmbed(nn.Module):
     """2D Image to Patch Embedding"""
 
@@ -108,12 +111,12 @@ class PatchEmbed(nn.Module):
         self.enable_fusion = enable_fusion
         self.fusion_type = fusion_type
 
-        padding = (
+        padding = ( # 패딩 계산
             (patch_size[0] - patch_stride[0]) // 2,
             (patch_size[1] - patch_stride[1]) // 2,
         )
 
-        if (self.enable_fusion) and (self.fusion_type == "channel_map"):
+        if (self.enable_fusion) and (self.fusion_type == "channel_map"): # 퓨전을 사용하고 channel_map인 경우
             self.proj = nn.Conv2d(
                 in_chans * 4,
                 embed_dim,
@@ -121,7 +124,7 @@ class PatchEmbed(nn.Module):
                 stride=patch_stride,
                 padding=padding,
             )
-        else:
+        else: # Conv2d 레이어로 프로젝션 수행
             self.proj = nn.Conv2d(
                 in_chans,
                 embed_dim,
@@ -129,11 +132,12 @@ class PatchEmbed(nn.Module):
                 stride=patch_stride,
                 padding=padding,
             )
-        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity() # 정규화 레이어 적용
 
-        if (self.enable_fusion) and (
+        if (self.enable_fusion) and (# 퓨전을 사용하고 2D AFF 또는 DAF
             self.fusion_type in ["daf_2d", "aff_2d", "iaff_2d"]
         ):
+            # 입력 채널 수와 임베딩 차원을 사용하여 Conv2d 레이어로 mel_conv2d 생성
             self.mel_conv2d = nn.Conv2d(
                 in_chans,
                 embed_dim,
@@ -141,6 +145,7 @@ class PatchEmbed(nn.Module):
                 stride=(patch_stride[0], patch_stride[1] * 3),
                 padding=padding,
             )
+             # 퓨전 타입에 따라 퓨전 모델 선택
             if self.fusion_type == "daf_2d":
                 self.fusion_model = DAF()
             elif self.fusion_type == "aff_2d":
@@ -149,7 +154,7 @@ class PatchEmbed(nn.Module):
                 self.fusion_model = iAFF(channels=embed_dim, type="2D")
 
     def forward(self, x, longer_idx=None):
-        if (self.enable_fusion) and (
+        if (self.enable_fusion) and ( # 퓨전을 사용하고 2D AFF 또는 DAF
             self.fusion_type in ["daf_2d", "aff_2d", "iaff_2d"]
         ):
             global_x = x[:, 0:1, :, :]
@@ -188,55 +193,56 @@ class PatchEmbed(nn.Module):
 
                 global_x[longer_idx] = self.fusion_model(global_x[longer_idx], local_x)
             x = global_x
-        else:
-            B, C, H, W = x.shape
+        else:# 퓨전을 사용하고 2D AFF 또는 DAF x
+            B, C, H, W = x.shape# 패치 임베딩 계산
             assert (
                 H == self.img_size[0] and W == self.img_size[1]
             ), f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-            x = self.proj(x)
+            x = self.proj(x)# 프로젝션
 
         if self.flatten:
-            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
-        x = self.norm(x)
+            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC # 평탄화
+        x = self.norm(x) # 정규화
         return x
 
-
+# MLP(Multi-Layer Perceptron) Class
 class Mlp(nn.Module):
-    """MLP as used in Vision Transformer, MLP-Mixer and related networks"""
+    """Vision Transformer, MLP-Mixer 및 관련 네트워크에서 사용되는 MLP(Multi-Layer Perceptron)"""
+    
 
     def __init__(
         self,
         in_features,
         hidden_features=None,
         out_features=None,
-        act_layer=nn.GELU,
+        act_layer=nn.GELU,# 활성화 함수로 기본적으로 GELU 함수
         drop=0.0,
     ):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        out_features = out_features or in_features# 출력 특성의 수가 지정되지 않은 경우 입력 특성과 동일하게 설정
+        hidden_features = hidden_features or in_features# 은닉 특성의 수가 지정되지 않은 경우 입력 특성과 동일하게 설정
+        self.fc1 = nn.Linear(in_features, hidden_features)# 첫 번째 선형 레이어
+        self.act = act_layer()# 활성화 함수
+        self.fc2 = nn.Linear(hidden_features, out_features)# 두 번째 선형 레이어
+        self.drop = nn.Dropout(drop)# 드롭아웃 레이어
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
+        x = self.fc1(x) # 첫 번째 선형 레이어 
+        x = self.act(x) # 활성화 함수 적용
+        x = self.drop(x)# 드롭아웃 적용
+        x = self.fc2(x)# 두 번째 선형 레이어
+        x = self.drop(x)# 드롭아웃 적용
         return x
 
-
+#정규 분포를 이용하여 텐서를 초기화하는 함수
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
     def norm_cdf(x):
-        # Computes standard normal cumulative distribution function
+        """표준 정규 누적 분포 함수 계산"""
         return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
 
-    if (mean < a - 2 * std) or (mean > b + 2 * std):
+    if (mean < a - 2 * std) or (mean > b + 2 * std):# 평균이 [a, b] 범위를 2 표준편차 이상 벗어난 경우
         warnings.warn(
             "mean is more than 2 std from [a, b] in nn.init.trunc_normal_. "
             "The distribution of values may be incorrect.",
@@ -244,52 +250,48 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         )
 
     with torch.no_grad():
-        # Values are generated by using a truncated uniform distribution and
-        # then using the inverse CDF for the normal distribution.
-        # Get upper and lower cdf values
+        # 값들은 자르고 분포함수의 역함수를 사용하여 표준 정규 분포로부터 생성됨
+        # 상하한 누적 분포 함수 값 획득
         l = norm_cdf((a - mean) / std)
         u = norm_cdf((b - mean) / std)
-
-        # Uniformly fill tensor with values from [l, u], then translate to
-        # [2l-1, 2u-1].
+       
+        # [l, u] 범위의 균일 분포 값을 텐서에 채운 후 [2l-1, 2u-1] 범위로 이동
         tensor.uniform_(2 * l - 1, 2 * u - 1)
 
-        # Use inverse cdf transform for normal distribution to get truncated
-        # standard normal
+        # 정규 분포의 역 누적 분포 변환을 사용하여 잘린 표준 정규 분포 획득
         tensor.erfinv_()
 
-        # Transform to proper mean, std
+        
+        # 적절한 평균, 표준편차로 변환
         tensor.mul_(std * math.sqrt(2.0))
         tensor.add_(mean)
 
-        # Clamp to ensure it's in the proper range
+        
+        # 적절한 범위로 잘라내기 위해 clamp
         tensor.clamp_(min=a, max=b)
         return tensor
 
-
+#정규 분포를 이용하여 텐서를 초기화
 def trunc_normal_(tensor, mean=0.0, std=1.0, a=-2.0, b=2.0):
-    # type: (Tensor, float, float, float, float) -> Tensor
-    r"""Fills the input Tensor with values drawn from a truncated
-    normal distribution. The values are effectively drawn from the
-    normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)`
-    with values outside :math:`[a, b]` redrawn until they are within
-    the bounds. The method used for generating the random values works
-    best when :math:`a \leq \text{mean} \leq b`.
+    r"""주어진 tensor를 잘린 정규 분포에서 뽑은 값으로 채웁니다.
+    값은 사실상 평균이 `mean`이고 분산이 `std^2`인 정규 분포로부터 뽑히며,
+    값이 `[a, b]` 범위를 벗어나면 범위 내로 다시 뽑힙니다.
+    무작위 값 생성에 사용되는 방법은 :math:`a \leq \text{mean} \leq b`일 때 가장 잘 작동합니다.
     Args:
-        tensor: an n-dimensional `torch.Tensor`
-        mean: the mean of the normal distribution
-        std: the standard deviation of the normal distribution
-        a: the minimum cutoff value
-        b: the maximum cutoff value
+        tensor: n차원의 `torch.Tensor`
+        mean: 정규 분포의 평균
+        std: 정규 분포의 표준 편차
+        a: 최소 임계 값
+        b: 최대 임계 값
     Examples:
         >>> w = torch.empty(3, 5)
         >>> nn.init.trunc_normal_(w)
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
-
+#주어진 tensor를 주어진 scale과 분산을 사용하여 초기화
 def variance_scaling_(tensor, scale=1.0, mode="fan_in", distribution="normal"):
-    fan_in, fan_out = _calculate_fan_in_and_fan_out(tensor)
+    fan_in, fan_out = _calculate_fan_in_and_fan_out(tensor) # 팬인(fan_in)과 팬아웃(fan_out)을 계산
     if mode == "fan_in":
         denom = fan_in
     elif mode == "fan_out":
@@ -300,68 +302,79 @@ def variance_scaling_(tensor, scale=1.0, mode="fan_in", distribution="normal"):
     variance = scale / denom
 
     if distribution == "truncated_normal":
-        # constant is stddev of standard normal truncated to (-2, 2)
+        # 상수는 (-2, 2) 범위의 표준 정규 분포의 표준 편차     
         trunc_normal_(tensor, std=math.sqrt(variance) / 0.87962566103423978)
     elif distribution == "normal":
         tensor.normal_(std=math.sqrt(variance))
-    elif distribution == "uniform":
+    elif distribution == "uniform": # 분산에 따라 일정 범위에서 균일한 분포에서 값을 뽑
         bound = math.sqrt(3 * variance)
         tensor.uniform_(-bound, bound)
     else:
         raise ValueError(f"invalid distribution {distribution}")
 
-
+#Lecun 정규 초기화를 사용하여 주어진 tensor를 초기화
 def lecun_normal_(tensor):
+    # 팬인(fan_in)에 기반하여 잘린 정규 분포에서 값을 뽑습니다.
     variance_scaling_(tensor, mode="fan_in", distribution="truncated_normal")
-
-
+    
+#이미지를 윈도우로 분할하는 함수
 def window_partition(x, window_size):
-    """
+    """    
     Args:
-        x: (B, H, W, C)
-        window_size (int): window size
+        x: (B, H, W, C) 형태의 입력 이미지 텐서
+        window_size (int): 윈도우 크기
+        
     Returns:
-        windows: (num_windows*B, window_size, window_size, C)
+        windows: (num_windows*B, window_size, window_size, C) 형태의 윈도우 텐서
     """
-    B, H, W, C = x.shape
+    B, H, W, C = x.shape# 입력 이미지를 윈도우 크기로 나누어 각 윈도우의 형태로 변환
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = (
+    windows = (# 윈도우의 차원을 조정하여 윈도우를 적절히 배치
         x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     )
     return windows
 
-
+#윈도우를 이미지로 복원하는 함수
 def window_reverse(windows, window_size, H, W):
     """
     Args:
-        windows: (num_windows*B, window_size, window_size, C)
-        window_size (int): Window size
-        H (int): Height of image
-        W (int): Width of image
+        windows: (num_windows*B, window_size, window_size, C) 형태의 윈도우 텐서
+        window_size (int): 윈도우 크기
+        H (int): 이미지의 높이
+        W (int): 이미지의 너비
+        
     Returns:
-        x: (B, H, W, C)
+        x: (B, H, W, C) 형태의 이미지 텐서
     """
+    # 이미지의 배치 크기를 계산
     B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(
+    x = windows.view(# 윈도우를 이미지로 복원
         B, H // window_size, W // window_size, window_size, window_size, -1
     )
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
-
+#윈도우 기반 다중 헤드 셀프 어텐션 (W-MSA) 모듈 
 class WindowAttention(nn.Module):
-    r"""Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    '''
+    1.입력으로 주어진 특성을 사용하여 self-attention을 계산
+    2.입력된 특성을 여러 개의 헤드로 나누어 각각의 헤드에서 어텐션을 계산
+    3.상대적인 위치 편향을 고려하여 어텐션을 계산
+    4.만약 마스크가 주어진 경우, 어텐션에 마스크를 적용
+    5.어텐션 가중치를 사용하여 값(value)을 가중치 합하여 출력
+    6.출력에 프로젝션을 적용하여 최종 출력을 생성
+    '''
+    
+    """ 
     Args:
-        dim (int): Number of input channels.
-        window_size (tuple[int]): The height and width of the window.
-        num_heads (int): Number of attention heads.
-        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
-        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
-    """
-
+        dim (int): 입력 채널의 개수
+        window_size (tuple[int]): 윈도우의 높이와 너비
+        num_heads (int): 어텐션 헤드의 개수
+        qkv_bias (bool, optional): True로 설정하면 쿼리, 키, 값에 학습 가능한 바이어스가 추가됩니다. 기본값: True
+        qk_scale (float | None, optional): 지정된 경우 기본 qk 스케일 (head_dim ** -0.5)을 재정의합니다.
+        attn_drop (float, optional): 어텐션 가중치의 드롭아웃 비율. 기본값: 0.0
+        proj_drop (float, optional): 출력의 드롭아웃 비율. 기본값: 0.0 """
+        
     def __init__(
         self,
         dim,
@@ -379,12 +392,13 @@ class WindowAttention(nn.Module):
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim**-0.5
 
-        # define a parameter table of relative position bias
+        # 상대적 위치 편향에 대한 파라미터 테이블 정의
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads)
         )  # 2*Wh-1 * 2*Ww-1, nH
 
-        # get pair-wise relative position index for each token inside the window
+        
+        # 각 토큰 내의 윈도우에 대한 쌍별 상대적 위치 인덱스 가져오기
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
@@ -395,7 +409,7 @@ class WindowAttention(nn.Module):
         relative_coords = relative_coords.permute(
             1, 2, 0
         ).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+        relative_coords[:, :, 0] += self.window_size[0] - 1   # 0부터 시작하도록 이동
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
@@ -410,11 +424,14 @@ class WindowAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
+        
         """
         Args:
-            x: input features with shape of (num_windows*B, N, C)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+            x: (num_windows*B, N, C) 형태의 입력 특성
+            mask: (0/-inf) (num_windows, Wh*Ww, Wh*Ww) 형태의 마스크 또는 None
         """
+        #1. 입력으로 주어진 특성을 사용하여 self-attention을 계산
+        #2. 입력된 특성을 여러 개의 헤드로 나누어 각각의 헤드에서 어텐션을 계산
         B_, N, C = x.shape
         qkv = (
             self.qkv(x)
@@ -425,11 +442,12 @@ class WindowAttention(nn.Module):
             qkv[0],
             qkv[1],
             qkv[2],
-        )  # make torchscript happy (cannot use tensor as tuple)
-
+        ) # torchscript에서는 tensor를 튜플로 사용할 수 없음
+       
         q = q * self.scale
-        attn = q @ k.transpose(-2, -1)
-
+        attn = q @ k.transpose(-2, -1)#각각의 헤드에서 어텐션을 계산
+       
+        #3. 상대적인 위치 편향을 고려하여 어텐션을 계산
         relative_position_bias = self.relative_position_bias_table[
             self.relative_position_index.view(-1)
         ].view(
@@ -441,7 +459,7 @@ class WindowAttention(nn.Module):
             2, 0, 1
         ).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0)
-
+        #4. 만약 마스크가 주어진 경우, 어텐션에 마스크를 적용
         if mask is not None:
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(
@@ -451,37 +469,38 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
-
+        # 5. 어텐션 가중치를 사용하여 값(value)을 가중치 합하여 출력
         attn = self.attn_drop(attn)
-
+        # 6. 출력에 프로젝션 적용 최종 출력 생성
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        x = self.proj(x)
+        x = self.proj(x) 
         x = self.proj_drop(x)
         return x, attn
 
     def extra_repr(self):
+        #dim, window_size, num_heads의 값 반환
         return f"dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}"
 
 
-# We use the model based on Swintransformer Block, therefore we can use the swin-transformer pretrained model
+# 사전 훈련된 swin-transformer 모델  
 class SwinTransformerBlock(nn.Module):
-    r"""Swin Transformer Block.
+    r"""Swin Transformer 블록.
     Args:
-        dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion.
-        num_heads (int): Number of attention heads.
-        window_size (int): Window size.
-        shift_size (int): Shift size for SW-MSA.
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
-        drop (float, optional): Dropout rate. Default: 0.0
-        attn_drop (float, optional): Attention dropout rate. Default: 0.0
-        drop_path (float, optional): Stochastic depth rate. Default: 0.0
-        act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
-    """
-
+        dim (int): 입력 채널의 개수.
+        input_resolution (tuple[int]): 입력 해상도.
+        num_heads (int): 어텐션 헤드의 개수.
+        window_size (int): 윈도우 크기.
+        shift_size (int): SW-MSA에 대한 이동 크기.
+        mlp_ratio (float): 임베딩 차원 대비 mlp 은닉 차원의 비율.
+        qkv_bias (bool, optional): True로 설정하면 쿼리, 키, 값에 학습 가능한 바이어스가 추가됩니다. 기본값: True
+        qk_scale (float | None, optional): 지정된 경우 기본 qk 스케일 (head_dim ** -0.5)을 재정의합니다.
+        drop (float, optional): 드롭아웃 비율. 기본값: 0.0
+        attn_drop (float, optional): 어텐션 드롭아웃 비율. 기본값: 0.0
+        drop_path (float, optional): 스토캐스틱 깊이 비율. 기본값: 0.0
+        act_layer (nn.Module, optional): 활성화 레이어. 기본값: nn.GELU
+        norm_layer (nn.Module, optional): 정규화 레이어.  기본값: nn.LayerNorm
+    """    
+    #Swin Transformer 블록 초기화  -> SW-MSA에 사용할 어텐션 마스크를 생성
     def __init__(
         self,
         dim,
@@ -544,7 +563,7 @@ class SwinTransformerBlock(nn.Module):
         )
 
         if self.shift_size > 0:
-            # calculate attention mask for SW-MSA
+            # SW-MSA에 대한 어텐션 마스크 계산
             H, W = self.input_resolution
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
             h_slices = (
@@ -576,6 +595,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.register_buffer("attn_mask", attn_mask)
 
+    #입력 데이터를 받아 Swin Transformer 블록을 통해 전달 = 정규화, 윈도우 분할, 어텐션 연산, 윈도우 병합, 역순환 이동, Feed Forward Network (FFN) 연산을 수행
     def forward(self, x):
         # pdb.set_trace()
         H, W = self.input_resolution
@@ -626,16 +646,17 @@ class SwinTransformerBlock(nn.Module):
         # FFN
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-
+        #입력 데이터와 어텐션을 반환
         return x, attn
-
+    
+    #Swin Transformer 블록의 설정 정보(채널 수, 입력 해상도, 어텐션 헤드 개수, 윈도우 크기, 이동 크기, MLP 비율)를 문자열 형태로 반환
     def extra_repr(self):
         return (
             f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, "
             f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
         )
 
-
+#패치 병합 수행
 class PatchMerging(nn.Module):
     r"""Patch Merging Layer.
     Args:
@@ -643,14 +664,14 @@ class PatchMerging(nn.Module):
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
-
+    #패치 병합 레이어 초기화
     def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
-
+    #입력 패치를 받아서 패치 병합 연산을 수행    
     def forward(self, x):
         """
         x: B, H*W, C
@@ -661,7 +682,7 @@ class PatchMerging(nn.Module):
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
-
+        #입력 패치를 정사각형 형태로 자르고, 두 겹의 차원을 줄여 2배 크기로 줄임
         x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
         x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
@@ -669,15 +690,16 @@ class PatchMerging(nn.Module):
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
+        # 줄어든 차원을 정규화하고 선형 레이어를 통해 차원을 축소
         x = self.norm(x)
         x = self.reduction(x)
 
         return x
-
+    # 패치 병합 레이어의 설정 정보(입력 해상도와 채널 수) 를 문자열 형태로 반환
     def extra_repr(self):
         return f"input_resolution={self.input_resolution}, dim={self.dim}"
 
-
+# Swin Transformer의 기본 레이어 정의
 class BasicLayer(nn.Module):
     """A basic Swin Transformer layer for one stage.
     Args:
@@ -696,7 +718,7 @@ class BasicLayer(nn.Module):
         downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
-
+    # 블록을 생성하고, 이를 self.blocks에 저장, downsample이 주어진 경우, downsample 레이어를 생성
     def __init__(
         self,
         dim,
@@ -721,7 +743,7 @@ class BasicLayer(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
-        # build blocks
+        # 블록을 생성 -> 이를 self.blocks에 저장,
         self.blocks = nn.ModuleList(
             [
                 SwinTransformerBlock(
@@ -745,35 +767,38 @@ class BasicLayer(nn.Module):
             ]
         )
 
-        # patch merging layer
+         
+        # downsample이 주어진 경우, downsample 레이어를 생성
         if downsample is not None:
             self.downsample = downsample(
                 input_resolution, dim=dim, norm_layer=norm_layer
             )
         else:
             self.downsample = None
-
+    
+    #입력 x를 각 블록에 통과
     def forward(self, x):
         attns = []
         for blk in self.blocks:
-            if self.use_checkpoint:
+            if self.use_checkpoint:#필요에 따라 체크포인팅을 사용
                 x = checkpoint.checkpoint(blk, x)
             else:
                 x, attn = blk(x)
                 if not self.training:
                     attns.append(attn.unsqueeze(0))
-        if self.downsample is not None:
+        if self.downsample is not None:#필요한 경우 다운샘플링을 수행
             x = self.downsample(x)
-        if not self.training:
+        if not self.training:#테스트 중에는 어텐션 맵도 반환
             attn = torch.cat(attns, dim=0)
             attn = torch.mean(attn, dim=0)
-        return x, attn
+        return x, attn#블록의 출력을 반환
 
+    #레이어의 추가 정보를 문자열로 반환
     def extra_repr(self):
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
 
 
-# The Core of HTSAT
+# Swin Transformer를 기반으로 한 HTSAT(Hierarchical Temporal Self-Attention) 모델 정의
 class HTSAT_Swin_Transformer(nn.Module):
     r"""HTSAT based on the Swin Transformer
     Args:
@@ -799,6 +824,7 @@ class HTSAT_Swin_Transformer(nn.Module):
         config (module): The configuration Module from config.py
     """
 
+    #모델의 구조와 하이퍼파라미터를 초기화
     def __init__(
         self,
         spec_size=256,
@@ -1006,7 +1032,8 @@ class HTSAT_Swin_Transformer(nn.Module):
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
         return {"relative_position_bias_table"}
-
+    
+    #주어진 입력에 대한 특성 추출 및 전방 전달을 수행
     def forward_features(self, x, longer_idx=None):
         # A deprecated optimization for using a hierarchical output from different blocks
 
@@ -1059,6 +1086,7 @@ class HTSAT_Swin_Transformer(nn.Module):
 
         return output_dict
 
+    #주어진 오디오 데이터를 잘라내어 지정된 크기의 오디오 클립으로
     def crop_wav(self, x, crop_size, spe_pos=None):
         time_steps = x.shape[2]
         tx = torch.zeros(x.shape[0], x.shape[1], crop_size, x.shape[3]).to(x.device)
@@ -1070,7 +1098,7 @@ class HTSAT_Swin_Transformer(nn.Module):
             tx[i][0] = x[i, 0, crop_pos : crop_pos + crop_size, :]
         return tx
 
-    # Reshape the wavform to a img size, if you want to use the pretrained swin transformer model
+    #오디오 데이터를 이미지 형식으로 재구성
     def reshape_wav2img(self, x):
         B, C, T, F = x.shape
         target_T = int(self.spec_size * self.freq_ratio)
@@ -1100,7 +1128,7 @@ class HTSAT_Swin_Transformer(nn.Module):
         x = x.reshape(x.shape[0], x.shape[1], x.shape[2] * x.shape[3], x.shape[4])
         return x
 
-    # Repeat the wavform to a img size, if you want to use the pretrained swin transformer model
+    #오디오 데이터를 이미지 형식으로 재구성한 후, 특정 위치에 해당하는 클립을 반복하여 오디오 데이터의 길이를 맞춤
     def repeat_wat2img(self, x, cur_pos):
         B, C, T, F = x.shape
         target_T = int(self.spec_size * self.freq_ratio)
@@ -1122,6 +1150,7 @@ class HTSAT_Swin_Transformer(nn.Module):
         x = x.repeat(repeats=(1, 1, 4, 1))
         return x
 
+    #입력을 모델에 전달하여 출력을 생성
     def forward(
         self, x: torch.Tensor, mixup_lambda=None, infer_mode=False, device=None
     ):  # out_feat_keys: List[str] = None):
@@ -1246,7 +1275,7 @@ class HTSAT_Swin_Transformer(nn.Module):
 
         return output_dict
 
-
+# HTSAT 모델 생성 함수
 def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
     try:
         assert audio_cfg.model_name in [
@@ -1260,7 +1289,9 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 patch_size=4,
                 patch_stride=(4, 4),
                 num_classes=audio_cfg.class_num,
+                # 임베딩 차원 설정
                 embed_dim=96,
+                # HTSAT-Swin Transformer 레이어의 깊이 설정
                 depths=[2, 2, 6, 2],
                 num_heads=[4, 8, 16, 32],
                 window_size=8,
@@ -1274,7 +1305,9 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 patch_size=4,
                 patch_stride=(4, 4),
                 num_classes=audio_cfg.class_num,
+                # 임베딩 차원 설정
                 embed_dim=128,
+                # HTSAT-Swin Transformer 레이어의 깊이 설정
                 depths=[2, 2, 12, 2],
                 num_heads=[4, 8, 16, 32],
                 window_size=8,
@@ -1288,7 +1321,9 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 patch_size=4,
                 patch_stride=(4, 4),
                 num_classes=audio_cfg.class_num,
+                # 임베딩 차원 설정
                 embed_dim=256,
+                # HTSAT-Swin Transformer 레이어의 깊이 설정
                 depths=[2, 2, 12, 2],
                 num_heads=[4, 8, 16, 32],
                 window_size=8,
@@ -1296,9 +1331,9 @@ def create_htsat_model(audio_cfg, enable_fusion=False, fusion_type="None"):
                 enable_fusion=enable_fusion,
                 fusion_type=fusion_type,
             )
-
+        #생성된 HTSAT 모델을 반환
         return model
-    except:
+    except:# RuntimeError 예외 발생
         raise RuntimeError(
             f"Import Model for {audio_cfg.model_name} not found, or the audio cfg parameters are not enough."
         )

@@ -18,12 +18,12 @@ from .pretrained import (
 
 __all__ = ["list_openai_models", "load_openai_model"]
 
-
+#사용 가능한 OpenAI CLIP 모델의 이름을 반환
 def list_openai_models() -> List[str]:
     """Returns the names of available CLIP models"""
     return list_pretrained_tag_models("openai")
 
-
+# CLIP 모델을 로드하고, 해당 모델의 텍스트 사전 훈련 부분을 보존하고, CLAP 모델에 설정
 def load_openai_model(
     name: str,
     model_cfg,
@@ -33,24 +33,24 @@ def load_openai_model(
     enable_fusion: bool = False,
     fusion_type: str = "None",
 ):
-    """Load a CLIP model, preserve its text pretrained part, and set in the CLAP model
-
+    """
     Parameters
     ----------
     name : str
-        A model name listed by `clip.available_models()`, or the path to a model checkpoint containing the state_dict
+        `clip.available_models()`에 나열된 모델 이름 또는 상태 사전을 포함하는 모델 체크포인트의 경로
     device : Union[str, torch.device]
-        The device to put the loaded model
+        로드된 모델을 배치할 장치
     jit : bool
-        Whether to load the optimized JIT model (default) or more hackable non-JIT model.
+        최적화된 JIT 모델(기본값) 또는 더 편집 가능한 비-JIT 모델을 로드할지 여부
 
     Returns
     -------
     model : torch.nn.Module
-        The CLAP model
+        CLAP 모델
     preprocess : Callable[[PIL.Image], torch.Tensor]
-        A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
+        PIL 이미지를 반환된 모델이 입력으로 취할 수 있는 텐서로 변환하는 torchvision 변환
     """
+    
     if get_pretrained_url(name, "openai"):
         model_path = download_pretrained(
             get_pretrained_url(name, "openai"), root=cache_dir
@@ -120,7 +120,7 @@ def load_openai_model(
     patch_device(model.encode_audio)
     patch_device(model.encode_text)
 
-    # patch dtype to float32 on CPU
+    # # CPU에서 dtype을 float32로 패치
     if str(device) == "cpu":
         float_holder = torch.jit.trace(
             lambda: torch.ones([]).float(), example_inputs=[]
